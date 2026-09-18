@@ -5,7 +5,7 @@ from numpy import pi, fft
 
 from scipy import io
 import os
-data_path =   os.path.join(os.getcwd(),'res/data_8td_randA_randpphi_snr_train_k1_2/')
+data_path = os.environ.get('TOMOSAR_DATA_DIR', os.path.join(os.getcwd(), 'res/data_8td_randA_randpphi_snr_train_k1_2/'))
 if not os.path.exists(data_path):
     # 如果不存在，创建文件夹
     os.makedirs(data_path)

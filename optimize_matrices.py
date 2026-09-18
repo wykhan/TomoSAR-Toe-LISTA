@@ -9,7 +9,7 @@ def get_matrices(m, n, root_path,matrix_dir):
     Avoid recomputing and enforce consistency over multiple runs by saving the results in the matrix_dir.
     """
 
-    d = matrix_dir + str(m) + "_" + str(n) + "/"
+    d = os.path.join(matrix_dir, f"{m}_{n}") + os.sep
     if not os.path.exists(d):
         os.makedirs(d)
 

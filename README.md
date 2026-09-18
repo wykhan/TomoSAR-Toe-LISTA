@@ -22,6 +22,30 @@ generation script creates the larger training and testing `.pt` files needed
 by `train_spare_alista.py`. The smoke test uses a temporary directory and
 does not run the full data generation or training workload.
 
+## Formal script smoke run
+
+The data and training scripts accept `--data-dir` so their generated files and
+`D.npy` stay together. The sample counts are per SNR or interval setting; the
+original defaults remain 1280 training and 256 testing samples per setting.
+Training defaults remain 10 epochs, batch size 128, validation every batch,
+and a checkpoint every 10 epochs. `--device auto` selects the first available
+CUDA device or CPU. An explicit device such as `cuda:1` is also supported.
+
+```bash
+python train_dataset_SNR20250318_k1-2.py --data-dir res/official_smoke --training-points 2 --testing-points 1
+python train_spare_alista.py --data-dir res/official_smoke --epochs 1 --batch-size 16 --test-freq 1 --checkpoint-every 1 --device cuda:0
+```
+
+Verified on 2026-09-18 with the checked Python 3.10/PyTorch 2.2.2+cu121
+environment and an RTX 4090. The data script saved 77 training and 39 testing
+examples as `.pt` files. The training script processed four batches in one
+epoch, reported a first-step `Wre` gradient norm of 0.0442709 and weight
+change of 0.0155857, and completed four validation passes. Final batch
+training loss was 0.0299405 and validation loss was 0.0308452. The checkpoint
+`res/official_smoke/Toe_LISTA_Ada_epoch_0_8td_250319.pt` and loss CSV were
+saved; the checkpoint was loaded again and its tensors were finite. The
+generated `res/` directory is ignored by Git.
+
 ## Citation
 
 If you find this code useful for your research, please cite our paper:

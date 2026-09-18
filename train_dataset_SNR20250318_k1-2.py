@@ -1,12 +1,24 @@
 ##dataset
+import argparse
+import os
+
+parser = argparse.ArgumentParser(description='Generate TomoSAR training and testing data')
+parser.add_argument('--data-dir', default=os.path.join(os.path.dirname(__file__), 'res/data_8td_randA_randpphi_snr_train_k1_2'))
+parser.add_argument('--training-points', type=int, default=10 * 128, help='samples per SNR or interval setting')
+parser.add_argument('--testing-points', type=int, default=2 * 128, help='samples per SNR or interval setting')
+args = parser.parse_args()
+if args.training_points < 1 or args.testing_points < 1:
+    parser.error('sample counts must be positive')
+data_path = os.path.abspath(args.data_dir)
+os.environ['TOMOSAR_DATA_DIR'] = data_path
+
 from torch.utils.data import DataLoader
 import torch
 from paras12 import *
 from algorithm_toe import *
 
-trainingPoints = 10*128
-testingPoints = 2*128
-data_path =  os.path.join(os.getcwd(),'res/data_8td_randA_randpphi_snr_train_k1_2/')
+trainingPoints = args.training_points
+testingPoints = args.testing_points
 if not os.path.exists(data_path):
     # 如果不存在，创建文件夹
     os.makedirs(data_path)
@@ -62,6 +74,7 @@ for deta_rou in range(1, 30, 1):
 
 torch.save(dataset_training_all, os.path.join(data_path,"ula_training_data_randA_randphi_snr_8td.pt"))
 torch.save(dataset_testing_all, os.path.join(data_path,"ula_testing_data_randA_randphi_snr_8td.pt"))
+print(f"Saved training={len(dataset_training_all)} testing={len(dataset_testing_all)} to {data_path}")
 from scipy import io
 import os
 

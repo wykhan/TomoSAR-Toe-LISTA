@@ -1,4 +1,26 @@
 ##train
+import argparse
+import os
+
+parser = argparse.ArgumentParser(description='Train Toe_LISTA_Ada on generated TomoSAR data')
+parser.add_argument('--data-dir', default=os.path.join(os.path.dirname(__file__), 'res/data_8td_randA_randpphi_snr_train_k1_2'))
+parser.add_argument('--epochs', type=int, default=None)
+parser.add_argument('--batch-size', type=int, default=None)
+parser.add_argument('--test-freq', type=int, default=None)
+parser.add_argument('--checkpoint-every', type=int, default=10)
+parser.add_argument('--device', default='auto', help='auto, cpu, cuda, or cuda:N')
+args = parser.parse_args()
+if args.epochs is not None and args.epochs < 1:
+    parser.error('--epochs must be positive')
+if args.batch_size is not None and args.batch_size < 1:
+    parser.error('--batch-size must be positive')
+if args.test_freq is not None and args.test_freq < 1:
+    parser.error('--test-freq must be positive')
+if args.checkpoint_every < 1:
+    parser.error('--checkpoint-every must be positive')
+data_path = os.path.abspath(args.data_dir)
+os.environ['TOMOSAR_DATA_DIR'] = data_path
+
 import numpy as np
 from torch.utils.data import Dataset, DataLoader
 from matplotlib import pyplot as plt
@@ -17,15 +39,18 @@ from torch.nn import Module, Parameter, ReLU
 import torch.nn as nn
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 torch.cuda.empty_cache()
-# try to use gpu
-if torch.cuda.is_available():
-    device = torch.device('cuda:1')  # 指定使用第1张GPU
-else:
-    device = "cpu"
+device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu') if args.device == 'auto' else torch.device(args.device)
+if device.type == 'cuda' and (not torch.cuda.is_available() or device.index is not None and device.index >= torch.cuda.device_count()):
+    parser.error(f'device {device} is unavailable')
+epochs = args.epochs if args.epochs is not None else epochs
+batchSize = args.batch_size if args.batch_size is not None else batchSize
+testFreq = args.test_freq if args.test_freq is not None else testFreq
+print(f'Device: {device}; epochs: {epochs}; batch size: {batchSize}; validation frequency: {testFreq}')
 #仿真数据
-data_path =   os.path.join(os.getcwd(),'res/data_8td_randA_randpphi_snr_train_k1_2/')
-dataset_training = torch.load(os.path.join(data_path,"ula_training_data_randA_randphi_snr_8td.pt"))
-dataset_testing = torch.load(os.path.join(data_path,"ula_testing_data_randA_randphi_snr_8td.pt"))
+dataset_training = torch.load(os.path.join(data_path,"ula_training_data_randA_randphi_snr_8td.pt"), map_location='cpu', weights_only=False)
+dataset_testing = torch.load(os.path.join(data_path,"ula_testing_data_randA_randphi_snr_8td.pt"), map_location='cpu', weights_only=False)
+if len(dataset_training) < batchSize:
+    parser.error(f'batch size {batchSize} exceeds training examples {len(dataset_training)}')
 dataloader_training = DataLoader(dataset_training, 
                                  batch_size = batchSize, shuffle=True,drop_last=True)
 dataloader_testing = DataLoader(dataset_testing, 
@@ -94,13 +119,15 @@ optim = torch.optim.Adam(model.parameters(), lr=5e-4)#ALISTA,AT,5e-2#LISTA-TOE-S
 obj = torch.nn.MSELoss()
 sigmoid = torch.nn.Sigmoid()
 # 使用ReduceLROnPlateau调度器
-scheduler = ReduceLROnPlateau(optim, mode='min', factor=0.5, patience=1000, verbose=True)
+scheduler = ReduceLROnPlateau(optim, mode='min', factor=0.5, patience=1000)
 pos_loss = torch.nn.MSELoss()
 
 
 t = trange(epochs)
 #t = range(epochs)
+last_validation_loss = float('nan')
 for e in t:
+    model.train()
 
     for i, data in enumerate(dataloader_training):
 
@@ -120,41 +147,51 @@ for e in t:
         with torch.no_grad():
             training_losslist[idx] = loss
 
-        loss.backward()    
+        loss.backward()
+        if e == 0 and i == 0:
+            first_grad_norm = model.Wre.grad.norm().item()
+            first_weight = model.Wre.detach().clone()
         optim.step()
+        if e == 0 and i == 0:
+            print(f'First optimizer step: gradient norm={first_grad_norm:.6g}, weight change={(model.Wre.detach() - first_weight).norm().item():.6g}')
         optim.zero_grad()
         
         if testFreq and idx % testFreq == 0:
-            for k, test_data in enumerate(dataloader_testing):
+            model.eval()
+            with torch.no_grad():
+                for k, test_data in enumerate(dataloader_testing):
                 
-                x, y = test_data
+                    x, y = test_data
                 
-                xr = x.to(torch.float32).to(device)
-                xi = torch.zeros_like(xr).to(torch.float32).to(device)
+                    xr = x.to(torch.float32).to(device)
+                    xi = torch.zeros_like(xr).to(torch.float32).to(device)
                 
-                yr = y.real.to(torch.float32).to(device)
-                yi = y.imag.to(torch.float32).to(device)
+                    yr = y.real.to(torch.float32).to(device)
+                    yi = y.imag.to(torch.float32).to(device)
                 
-                xpredr, xpredi = model(yr, yi)
+                    xpredr, xpredi = model(yr, yi)
 
-                testing_losslist[idx] += torch.mean((xpredr.cpu() - xr.cpu())**2) + torch.mean((xpredi.cpu() - xi.cpu())**2)
-                scheduler.step(testing_losslist[idx])
-                # testing_losslist[idx] += torch.mean((xpredr.cpu() - xr.cpu())**2) 
+                    testing_losslist[idx] += torch.mean((xpredr.cpu() - xr.cpu())**2) + torch.mean((xpredi.cpu() - xi.cpu())**2)
+                    scheduler.step(testing_losslist[idx])
+            last_validation_loss = testing_losslist[idx]
+            model.train()
         t.set_description("Batch: {}/{}\t Training Loss: {}\t Validation Loss: {}".format(i, len(dataloader_training), training_losslist[idx], testing_losslist[idx]), refresh=True)
 
     # 打印当前学习率
         for param_group in optim.param_groups:
             print(f"Learning rate: {param_group['lr']}")
 
-    if (e + 1) % 10 == 0:
+    if (e + 1) % args.checkpoint_every == 0:
         pd.DataFrame(
             {
                 "train_loss": training_losslist,
                 "test_loss": testing_losslist
             }
-        ).to_csv(os.path.join(data_path + "/"+ cleaned_str +"_epoch_"+str(e)+"_log_250319"))
+        ).to_csv(os.path.join(data_path, cleaned_str +"_epoch_"+str(e)+"_log_250319.csv"), index=False)
 
         print(training_losslist[-1])
         plt.semilogy(training_losslist[10:])
         plt.semilogy(testing_losslist[10:])
-        torch.save(model.state_dict(), os.path.join(data_path + "/"+ cleaned_str +"_epoch_"+str(e)+"_8td_250319.pt"))
+        checkpoint_path = os.path.join(data_path, cleaned_str +"_epoch_"+str(e)+"_8td_250319.pt")
+        torch.save(model.state_dict(), checkpoint_path)
+        print(f'Checkpoint saved: {checkpoint_path}; latest validation loss={last_validation_loss:.6g}')
